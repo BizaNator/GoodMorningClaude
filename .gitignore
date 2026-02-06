@@ -17,3 +17,6 @@ desktop.ini
 
 # Claude local settings
 .claude/
+
+# Internal docs
+SOCIAL.md
