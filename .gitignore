@@ -1,0 +1,19 @@
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# PowerShell
+*.ps1xml
+
+# Temp files
+*.tmp
+*.bak
+
+# Claude local settings
+.claude/
