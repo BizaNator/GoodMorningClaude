@@ -1,4 +1,4 @@
-# Good Morning, Claude
+# ☀️ Good Morning, Claude
 
 **One command reopens all of yesterday's work.** Persist and resume Claude Code sessions across restarts -- save all your active sessions at end of day, reopen them all in the morning with full context.
 
@@ -12,25 +12,25 @@ claude-goodmorning
 
 ![image-20260206123147119](README.assets/image-20260206123147119.png) Window mode shown above - use "claude-goodmorning -w"
 
-**BrainDeadGuild**
+**🧠 BrainDeadGuild**
 
 *Don't Be BrAIn Dead Alone*
 
-*Games | AI | Community*
+*🎮 Games | 🤖 AI | 👥 Community*
 
 [![BrainDeadGuild](https://img.shields.io/badge/BrainDeadGuild-Community-purple.svg)](https://braindeadguild.com/discord) [![BrainDead.TV](https://img.shields.io/badge/BrainDead.TV-Lore-red.svg)](https://braindead.tv/)
 
-## About BrainDeadGuild
+## 🎯 About BrainDeadGuild
 
 **BrainDeadGuild** started in 2008 as a gaming community and evolved into a collaboration of gamers, streamers, AI creators, and game developers. We're focused on:
 
-- **Game Development** -- UEFN / Fortnite projects
-- **AI-Assisted Creation** -- tools and workflows
-- **BrainDead.TV** -- shared lore, characters, and worlds (including the City of Brains universe)
+- 🎮 **Game Development** -- UEFN / Fortnite projects
+- 🧠 **AI-Assisted Creation** -- tools and workflows
+- 📺 **BrainDead.TV** -- shared lore, characters, and worlds (including the City of Brains universe)
 
 The tools we release (like this one) are built for our own game and content pipelines, then shared openly when they're useful to others.
 
-## How It Works
+## ⚙️ How It Works
 
 ```
 End of day:                          Next morning:
@@ -49,7 +49,7 @@ End of day:                          Next morning:
                                      +------------------------+
 ```
 
-## Install
+## 📦 Install
 
 ```powershell
 git clone https://github.com/BizaNator/GoodMorningClaude.git
@@ -58,16 +58,16 @@ cd GoodMorningClaude
 ```
 
 The installer handles:
-- `/goodnight` and `/goodmorning` slash commands -> `~\.claude\commands\`
-- `claude-goodmorning.ps1` and `claude-sessions.ps1` -> `~\.local\bin\` (or custom path)
-- Creates `~\.claude-sessions\` storage directory
-- Adds UTF-8 BOM to scripts (required for PowerShell 5.1)
-- Sets ExecutionPolicy to RemoteSigned if needed
-- Removes Zone.Identifier from downloaded files (Unblock-File)
-- Adds script directory to PATH if needed
-- Optionally installs Windows Terminal color schemes and profile
+- 📝 `/goodnight` and `/goodmorning` slash commands -> `~\.claude\commands\`
+- 📜 `claude-goodmorning.ps1` and `claude-sessions.ps1` -> `~\.local\bin\` (or custom path)
+- 📁 Creates `~\.claude-sessions\` storage directory
+- 🔤 Adds UTF-8 BOM to scripts (required for PowerShell 5.1)
+- 🔓 Sets ExecutionPolicy to RemoteSigned if needed
+- 🛡️ Removes Zone.Identifier from downloaded files (Unblock-File)
+- 📍 Adds script directory to PATH if needed
+- 🎨 Optionally installs Windows Terminal color schemes and profile
 
-### Troubleshooting
+### 🔧 Troubleshooting
 
 **"File cannot be loaded... not digitally signed"**
 Scripts downloaded from the internet get a Zone.Identifier that blocks execution under RemoteSigned policy. The installer runs `Unblock-File` automatically. If you hit this manually:
@@ -82,13 +82,13 @@ PowerShell 5.1 reads `.ps1` files as Windows-1252 unless they have a UTF-8 BOM. 
 **"Raw mode is not supported" from Claude Code**
 This happens if you pipe content into `claude` (e.g., `$content | claude`). Claude Code needs a real TTY for its interactive UI. The goodmorning script avoids this by using a `.cmd` launcher and passing `/goodmorning <path>` as the initial prompt instead of piping.
 
-## Usage
+## 🚀 Usage
 
-### Use -help for a list of all commands
+### 📋 Use -help for a list of all commands
 
 ![image-20260206122745143](README.assets/image-20260206122745143.png)
 
-### End of Day -- Save Sessions
+### 🌙 End of Day -- Save Sessions
 
 Inside each Claude Code session:
 
@@ -99,7 +99,7 @@ Inside each Claude Code session:
 
 This creates a structured markdown file in `~\.claude-sessions\` and registers the session in `session-registry.json`. Works for both local and SSH sessions -- the host is recorded automatically.
 
-### Next Morning -- Resume Everything
+### ☀️ Next Morning -- Resume Everything
 
 From PowerShell:
 
@@ -124,13 +124,13 @@ claude-goodmorning -NoSkipPermissions  # Don't pass --dangerously-skip-permissio
 ```
 
 Each session opens in a new Windows Terminal tab/pane with:
-- Correct working directory (local) or SSH connection (remote)
-- `/goodmorning` command auto-sent as first message to load context
-- `--dangerously-skip-permissions` (disable with `-NoSkipPermissions`)
-- Unique color scheme per pane for visual identification
-- Pane title showing session name (`--suppressApplicationTitle`)
+- 📂 Correct working directory (local) or SSH connection (remote)
+- 💬 `/goodmorning` command auto-sent as first message to load context
+- ⚡ `--dangerously-skip-permissions` (disable with `-NoSkipPermissions`)
+- 🎨 Unique color scheme per pane for visual identification
+- 🏷️ Pane title showing session name (`--suppressApplicationTitle`)
 
-### Manage Sessions
+### 📋 Manage Sessions
 
 ```powershell
 claude-sessions                   # List active sessions
@@ -142,7 +142,7 @@ claude-sessions -Open             # Open sessions folder in Explorer
 claude-sessions -Help             # Full usage info
 ```
 
-### Inside a Running Session
+### 🔄 Inside a Running Session
 
 If you opened Claude Code manually (not via `claude-goodmorning`):
 
@@ -151,7 +151,7 @@ If you opened Claude Code manually (not via `claude-goodmorning`):
 /goodmorning C:\path\to\session.md  # Load a specific session file
 ```
 
-## Pane Grid Layout
+## 🔲 Pane Grid Layout
 
 The `-Panes "RxC"` option arranges sessions in a grid within a single Windows Terminal tab:
 
@@ -170,7 +170,7 @@ If you have more sessions than fit in one grid, additional tabs are created auto
 
 ![image-20260206122528499](README.assets/image-20260206122528499.png)
 
-## Windows Terminal Setup
+## 🎨 Windows Terminal Setup
 
 The installer can optionally configure Windows Terminal with:
 
@@ -180,20 +180,20 @@ The installer can optionally configure Windows Terminal with:
 
 | Scheme | Background | Accent |
 |--------|-----------|--------|
-| Claude Teal | `#0D2830` | `#2D7D9A` |
-| Claude Purple | `#1A1028` | `#8B5CF6` |
-| Claude Amber | `#281E0D` | `#D97706` |
-| Claude Emerald | `#0D2818` | `#059669` |
-| Claude Red | `#280D0D` | `#DC2626` |
-| Claude Violet | `#1A0D28` | `#7C3AED` |
-| Claude Cyan | `#0D2228` | `#0891B2` |
-| Claude Gold | `#28200D` | `#CA8A04` |
+| 🟦 Claude Teal | `#0D2830` | `#2D7D9A` |
+| 🟪 Claude Purple | `#1A1028` | `#8B5CF6` |
+| 🟧 Claude Amber | `#281E0D` | `#D97706` |
+| 🟩 Claude Emerald | `#0D2818` | `#059669` |
+| 🟥 Claude Red | `#280D0D` | `#DC2626` |
+| 💜 Claude Violet | `#1A0D28` | `#7C3AED` |
+| 🩵 Claude Cyan | `#0D2228` | `#0891B2` |
+| 💛 Claude Gold | `#28200D` | `#CA8A04` |
 
 Each pane gets a different scheme automatically. All schemes share the same VSCode-like foreground palette so code readability is identical.
 
 If you skip the WT setup during install, the scripts still work -- they just won't apply color schemes or custom titles.
 
-## File Structure
+## 📁 File Structure
 
 ```
 %USERPROFILE%\.claude-sessions\
@@ -203,7 +203,7 @@ If you skip the WT setup during install, the scripts still work -- they just won
 +-- 2026-02-06_biloxistudios.md        # New save = new file, old one stays as history
 ```
 
-### Registry Format
+### 📄 Registry Format
 
 ```json
 [
@@ -228,7 +228,7 @@ If you skip the WT setup during install, the scripts still work -- they just won
 ]
 ```
 
-### Session File Format
+### 📝 Session File Format
 
 ```markdown
 # Session: ProjectName -- 2026-02-05
@@ -264,7 +264,7 @@ home@brainz
 User wants to preserve all data -- no destructive operations without confirmation.
 ```
 
-## Requirements
+## ✅ Requirements
 
 - Windows 10/11
 - PowerShell 5.1+ (UTF-8 BOM handled by installer)
@@ -272,25 +272,25 @@ User wants to preserve all data -- no destructive operations without confirmatio
 - Windows Terminal recommended (falls back to plain cmd windows)
 - SSH client (for remote sessions)
 
-## License
+## 📜 License
 
 MIT License. See [LICENSE](LICENSE) for details.
 
 ---
 
-## Community & Support
+## 💬 Community & Support
 
-**Don't Be BrAIn Dead Alone!**
+**🧠 Don't Be BrAIn Dead Alone!**
 
 [![Discord](https://img.shields.io/badge/Discord-Join%20Us-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://BrainDeadGuild.com/discord)
 [![Website](https://img.shields.io/badge/Website-BrainDeadGuild.com-FF6B6B?style=for-the-badge)](https://BrainDeadGuild.com)
 
-- **Discord**: [BrainDeadGuild.com/discord](https://BrainDeadGuild.com/discord) - Get help, share creations, suggest features
-- **Website**: [BrainDeadGuild.com](https://BrainDeadGuild.com)
-- **Lore & Content**: [BrainDead.TV](https://BrainDead.TV)
-- **GitHub**: [github.com/BrainDeadGuild](https://github.com/BrainDeadGuild)
+- 💬 **Discord**: [BrainDeadGuild.com/discord](https://BrainDeadGuild.com/discord) - Get help, share creations, suggest features
+- 🌐 **Website**: [BrainDeadGuild.com](https://BrainDeadGuild.com)
+- 📺 **Lore & Content**: [BrainDead.TV](https://BrainDead.TV)
+- 🐙 **GitHub**: [github.com/BrainDeadGuild](https://github.com/BrainDeadGuild)
 
-### Other BrainDead Tools
+### 🛠️ Other BrainDead Tools
 
 Check out our other free tools for creators:
 
