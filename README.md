@@ -151,6 +151,124 @@ If you opened Claude Code manually (not via `claude-goodmorning`):
 /goodmorning C:\path\to\session.md  # Load a specific session file
 ```
 
+## 🚀 Launch Fresh Sessions
+
+Need to spin up a batch of fresh Claude Code instances without any saved session context? Use `claude-launch` to open multiple tabs/panes targeting local or remote paths.
+
+### 🎯 Basic Usage
+
+```powershell
+# Target strings: "user@host:/path xN"
+claude-launch "home@brainz:/opt/ai-server-config x2" "home@brainz:/opt/game-server-config x2" -Panes "2x2"
+
+# Single-target shorthand
+claude-launch -Host "home@brainz" -Path "/opt/ai-server-config" -Count 4 -Panes "2x2"
+
+# Local targets
+claude-launch -Path "C:\tools\myproject" -Count 2 -Panes "1x2"
+
+# Terminal only (no Claude)
+claude-launch -Path "C:\tools" -NoClaude
+
+# Dry run preview
+claude-launch -DryRun -Path "C:\tools" -Count 2 -Panes "1x2"
+```
+
+### 📝 Target String Format
+
+Three ways to specify targets:
+
+**1. Positional target strings** -- Most flexible:
+```
+"user@host:/path xN"   # Remote SSH (@ distinguishes from C:\ drive letters)
+"C:\local\path xN"      # Local path
+```
+The `xN` suffix is optional (defaults to `x1`). Examples:
+```powershell
+claude-launch "home@brainz:/opt/config x2" "C:\tools\myproject"
+```
+
+**2. Single-target shorthand** -- Named parameters for one target:
+```powershell
+claude-launch -Host "home@brainz" -Path "/opt/config" -Count 4 -Label "Config"
+claude-launch -Path "C:\tools" -Count 2
+```
+
+**3. Profiles** -- Saved configurations (see below).
+
+### 📋 Profiles
+
+Save frequently-used launch configurations to `~\.claude-sessions\launch-profiles.json`:
+
+```powershell
+# Save a profile
+claude-launch -SaveProfile "brainz-servers" "home@brainz:/opt/ai-server-config x2" "home@brainz:/opt/game-server-config x2" -Panes "2x2"
+
+# Launch from profile
+claude-launch -Profile "brainz-servers"
+
+# Manage profiles
+claude-launch -ListProfiles
+claude-launch -DeleteProfile -Profile "brainz-servers"
+```
+
+**Profile JSON format:**
+```json
+{
+  "brainz-servers": {
+    "description": "Remote server config sessions",
+    "panes": "2x2",
+    "targets": [
+      { "host": "home@brainz", "path": "/opt/ai-server-config", "count": 2, "label": "AI Server" },
+      { "host": "home@brainz", "path": "/opt/game-server-config", "count": 2, "label": "Game Server" }
+    ]
+  }
+}
+```
+
+### ⚙️ Options
+
+```powershell
+# Mode Options
+-NoClaude                   # Open terminal only (no Claude Code)
+-NoSkipPermissions          # Don't pass --dangerously-skip-permissions to Claude
+
+# Layout Options
+-Panes "2x2"                # Grid layout (rows x columns)
+-Panes 4                    # Single row, 4 columns
+-Windows                    # Separate windows instead of tabs
+
+# Execution Options
+-Delay 5                    # Pause between spawns in seconds (default: 3)
+-DryRun                     # Preview what would launch without executing
+-Help                       # Show full usage information
+
+# Profile Options
+-Profile "name"             # Load saved profile
+-SaveProfile "name"         # Save current targets as profile
+-ListProfiles               # Show all saved profiles
+-DeleteProfile -Profile "name"  # Delete a saved profile
+
+# Target Options (single-target shorthand)
+-Host "user@hostname"       # SSH host for single target
+-Path "C:\path"             # Local or remote path
+-Count 4                    # Number of instances (default: 1)
+-Label "Name"               # Custom label for pane titles
+```
+
+### 🔄 Claude Mode vs NoClaude Mode
+
+**Claude Mode (default):**
+- Launches `claude --dangerously-skip-permissions` in each pane
+- Remote sessions: `ssh user@host -t "cd '/path' && claude ..."`
+- Local sessions: `cd /d "C:\path" && claude ...`
+
+**NoClaude Mode (`-NoClaude`):**
+- Opens plain terminal/shell in each pane
+- Remote sessions: `ssh user@host -t "cd '/path' && exec $SHELL -l"`
+- Local sessions: `cd /d "C:\path" && cmd /k`
+- Useful for quick terminal access or manual workflows
+
 ## 🔲 Pane Grid Layout
 
 The `-Panes "RxC"` option arranges sessions in a grid within a single Windows Terminal tab:
@@ -198,6 +316,7 @@ If you skip the WT setup during install, the scripts still work -- they just won
 ```
 %USERPROFILE%\.claude-sessions\
 +-- session-registry.json              # Central manifest of all active sessions
++-- launch-profiles.json               # Saved claude-launch configurations
 +-- 2026-02-05_bdrp-props-system.md    # Session snapshots (slug-based filenames)
 +-- 2026-02-05_brainmon-dashboard.md
 +-- 2026-02-06_bdrp-props-system.md    # New save = new file, old one stays as history

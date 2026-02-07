@@ -58,6 +58,7 @@ New-Item -ItemType Directory -Force -Path $ScriptDir | Out-Null
 
 Copy-WithBom (Join-Path $root "scripts\claude-goodmorning.ps1") (Join-Path $ScriptDir "claude-goodmorning.ps1")
 Copy-WithBom (Join-Path $root "scripts\claude-sessions.ps1")    (Join-Path $ScriptDir "claude-sessions.ps1")
+Copy-WithBom (Join-Path $root "scripts\claude-launch.ps1")      (Join-Path $ScriptDir "claude-launch.ps1")
 
 Write-Host "  [OK] Scripts -> $ScriptDir (UTF-8 with BOM)" -ForegroundColor Green
 
@@ -174,5 +175,6 @@ Write-Host "    Inside Claude Code:  /goodmorning         Load session in curren
 Write-Host "    In PowerShell:       claude-goodmorning   Spawn ALL active sessions" -ForegroundColor DarkGray
 Write-Host "    In PowerShell:       claude-goodmorning -Panes `"2x4`"  Grid layout" -ForegroundColor DarkGray
 Write-Host "    In PowerShell:       claude-sessions      List registered sessions" -ForegroundColor DarkGray
+Write-Host "    In PowerShell:       claude-launch        Launch fresh sessions" -ForegroundColor DarkGray
 Write-Host "    Either script:       -Help                Show all options" -ForegroundColor DarkGray
 Write-Host ""
