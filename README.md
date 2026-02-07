@@ -198,9 +198,9 @@ If you skip the WT setup during install, the scripts still work -- they just won
 ```
 %USERPROFILE%\.claude-sessions\
 +-- session-registry.json              # Central manifest of all active sessions
-+-- 2026-02-05_biloxistudios.md        # Session snapshots (one per save)
-+-- 2026-02-05_infrastructure.md
-+-- 2026-02-06_biloxistudios.md        # New save = new file, old one stays as history
++-- 2026-02-05_bdrp-props-system.md    # Session snapshots (slug-based filenames)
++-- 2026-02-05_brainmon-dashboard.md
++-- 2026-02-06_bdrp-props-system.md    # New save = new file, old one stays as history
 ```
 
 ### 📄 Registry Format
@@ -208,25 +208,29 @@ If you skip the WT setup during install, the scripts still work -- they just won
 ```json
 [
   {
-    "sessionName": "BiloxiStudios -- Storage Recovery",
-    "projectName": "biloxistudios",
-    "projectPath": "D:\\Projects\\BiloxiStudios",
+    "sessionName": "BDRP -- Props System",
+    "sessionSlug": "bdrp-props-system",
+    "projectName": "braindeadrp",
+    "projectPath": "C:\\P4\\BrainDeadRP",
     "host": "",
-    "resumePath": "C:\\Users\\BizaNator\\.claude-sessions\\2026-02-05_biloxistudios.md",
+    "resumePath": "C:\\Users\\BizaNator\\.claude-sessions\\2026-02-05_bdrp-props-system.md",
     "status": "in-progress",
     "lastUpdated": "2026-02-05T18:30:00"
   },
   {
     "sessionName": "BrainMon -- Dashboard",
+    "sessionSlug": "brainmon-dashboard",
     "projectName": "brainmon",
     "projectPath": "/opt/BrainMon",
     "host": "home@brainz",
-    "resumePath": "C:\\Users\\BizaNator\\.claude-sessions\\2026-02-05_brainmon.md",
+    "resumePath": "C:\\Users\\BizaNator\\.claude-sessions\\2026-02-05_brainmon-dashboard.md",
     "status": "in-progress",
     "lastUpdated": "2026-02-05T22:00:00"
   }
 ]
 ```
+
+Multiple sessions can share the same `projectPath` -- each gets a unique `sessionSlug`. Registry matches on slug, not project name.
 
 ### 📝 Session File Format
 
