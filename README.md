@@ -151,6 +151,48 @@ If you opened Claude Code manually (not via `claude-goodmorning`):
 /goodmorning C:\path\to\session.md  # Load a specific session file
 ```
 
+## 🎛️ Interactive Menu
+
+**New!** Don't want to remember command-line flags? Use the interactive menu system for a guided experience:
+
+```powershell
+claude-menu
+```
+
+![Interactive Menu](README.assets/menu-demo.png)
+
+The menu provides a user-friendly interface for:
+
+### Main Menu Options:
+1. **Resume saved sessions** - Interactive picker for your active sessions (same as `claude-goodmorning -Pick`)
+2. **Launch new session(s)** - Sub-menu for launching fresh Claude instances
+   - Single local path
+   - Single remote path (SSH)
+   - Multiple targets (advanced)
+   - From saved profile
+3. **Manage sessions** - Sub-menu for session management
+   - List all sessions or active only
+   - Mark sessions as done
+   - Remove sessions
+   - Clean orphaned entries
+   - Sync Wave Terminal connections
+   - Refresh tmux status for remote sessions
+   - Open sessions folder in Explorer
+4. **Configure defaults** - Sub-menu for preferences
+   - Default pane layout (e.g., "2x2", "3x4", or tab mode)
+   - Default terminal (auto, wave, wt, cmd)
+   - Toggle windows mode (separate windows vs single window)
+   - Toggle skip permissions flag
+   - Set launch delay (seconds between spawning sessions)
+   - Reset all settings to defaults
+5. **Exit**
+
+### Configuration Persistence
+
+The menu saves your preferences to `~/.claude-sessions/menu-config.json`. Your defaults apply to all menu-initiated launches and can be changed anytime via the Configure menu.
+
+**Pro tip:** Use the menu for quick one-off tasks, and use the command-line scripts directly when you have specific flags or when scripting workflows.
+
 ## 🚀 Launch Fresh Sessions
 
 Need to spin up a batch of fresh Claude Code instances without any saved session context? Use `claude-launch` to open multiple tabs/panes targeting local or remote paths.
@@ -287,6 +329,218 @@ The `-Panes "RxC"` option arranges sessions in a grid within a single Windows Te
 If you have more sessions than fit in one grid, additional tabs are created automatically. Plain `-Panes 4` creates a single row of 4 columns.
 
 ![image-20260206122528499](README.assets/image-20260206122528499.png)
+
+## 🌊 Wave Terminal Support
+
+**New!** Good Morning, Claude now supports [Wave Terminal](https://www.waveterm.dev/) as an alternative to Windows Terminal.
+
+### What is Wave Terminal?
+
+Wave is a modern, open-source terminal with built-in SSH connection management, persistent remote sessions, and cross-platform support (Windows, macOS, Linux).
+
+### Automatic SSH Connection Generation
+
+When you save remote sessions with `/goodnight`, Good Morning Claude automatically generates Wave Terminal connection profiles:
+
+```powershell
+claude-sessions -SyncWave
+```
+
+This creates/updates `~/.config/waveterm/config/connections.json` (or Windows equivalent) with:
+- SSH connection details (user@host)
+- Tmux auto-attach initscripts (see Tmux section below)
+- Wave-specific settings for each remote host
+
+### Using Wave Terminal
+
+**Automatic detection:**
+```powershell
+claude-goodmorning          # Uses Wave if installed, otherwise falls back to WT/cmd
+```
+
+**Explicit selection:**
+```powershell
+claude-goodmorning -Terminal wave
+claude-launch -Terminal wave -Path "/opt/myproject" -Count 2
+```
+
+**Set as default:**
+Edit `~/.claude-sessions/terminal-config.json`:
+```json
+{
+  "preferredTerminal": "wave",
+  "fallbackChain": ["wave", "windowsterminal", "cmd"]
+}
+```
+
+### Wave Limitations
+
+- **Grid panes not supported** - Wave uses a single-pane-per-tab model. If you specify `-Panes`, Good Morning Claude will warn and fall back to tab mode.
+- **Manual launcher execution** - Wave doesn't support command-line arguments for executing commands on launch (yet). For local sessions, you'll need to run the displayed launcher command manually. For remote sessions with tmux, the initscript handles this automatically.
+
+### Best Practices with Wave
+
+1. **Use tmux for remote sessions** (automatic, see next section) - The tmux initscript auto-attaches, so you don't need to run commands manually
+2. **Sync connections regularly** - Run `claude-sessions -SyncWave` after saving new remote sessions
+3. **Use the menu** - `claude-menu` handles terminal selection and syncing for you
+
+## 🖥️ Tmux Persistence for Remote Sessions
+
+**New!** Remote SSH sessions automatically use tmux for persistence. Disconnect your workstation, reconnect later, and your Claude session is still there.
+
+### How It Works
+
+When you save a remote session with `/goodnight`, Good Morning Claude:
+1. Detects you're in an SSH session (checks `$SSH_CONNECTION` or `$SSH_CLIENT`)
+2. Records the tmux session name (either current session or generates `claude-<session-slug>`)
+3. Stores this in both the session file and registry
+
+When you run `claude-goodmorning` (or use Wave Terminal):
+1. Launcher checks if tmux session exists on remote host
+2. If exists: Attaches to existing session (your Claude instance is still running!)
+3. If not: Creates new tmux session and starts Claude
+
+### Tmux Session Naming
+
+Sessions are named `claude-<session-slug>` by default:
+- `claude-brainmon-dashboard`
+- `claude-bdrp-props-system`
+
+If you're already in a tmux session when you run `/goodnight`, it uses that session name instead.
+
+### Managing Tmux Sessions
+
+**Check tmux status:**
+```powershell
+claude-sessions -RefreshTmux
+```
+
+This connects to each remote host and checks:
+- Does the tmux session exist?
+- Is it attached or detached?
+- When was it last seen?
+
+**View in session list:**
+```powershell
+claude-sessions           # Shows tmux status for remote sessions
+```
+
+Example output:
+```
+[1] BrainMon -- Dashboard  in-progress
+    /opt/BrainMon
+    Terminal: auto | Updated: 2026-02-08T10:30:00
+    Tmux: claude-brainmon-dashboard (detached)
+```
+
+### Manual Tmux Operations
+
+You can always manually manage tmux sessions:
+```bash
+# On remote host
+tmux ls                                    # List all sessions
+tmux attach -t claude-brainmon-dashboard   # Attach to specific session
+tmux detach                                # Detach (Ctrl+B, D)
+tmux kill-session -t claude-brainmon-dashboard  # Kill session
+```
+
+### Tmux Hotkey Reference
+
+**Essential Keybindings** (configured in `~/.tmux.conf`):
+
+**Prefix Key:** `Ctrl+B` (press before most commands below)
+
+**Window Management:**
+- `Prefix + C` - Create new window
+- `Prefix + N` - Next window
+- `Prefix + P` - Previous window
+- `Prefix + 0-9` - Switch to window number
+- `Prefix + ,` - Rename current window
+- `Prefix + &` - Kill current window (with confirmation)
+
+**Pane Management:**
+- `Prefix + |` - Split pane vertically (side by side)
+- `Prefix + -` - Split pane horizontally (top/bottom)
+- `Alt+Arrow` - Navigate between panes (no prefix needed!)
+- `Ctrl+Arrow` - Resize current pane (no prefix needed!)
+- `Prefix + X` - Kill current pane (with confirmation)
+- `Prefix + Z` - Toggle pane zoom (fullscreen)
+- `Prefix + Q` - Show pane numbers (4 seconds)
+
+**Session Management:**
+- `Prefix + D` - Detach from session (keeps running)
+- `Prefix + S` - List all sessions
+- `Prefix + $` - Rename current session
+
+**Copy Mode (Vim-style):**
+- `Prefix + [` - Enter copy mode (scroll/search)
+- `V` - Begin selection (in copy mode)
+- `Y` - Copy selection and exit (in copy mode)
+- `Escape` - Cancel copy mode
+- `Prefix + ]` - Paste copied text
+
+**Other Useful:**
+- `Prefix + R` - Reload tmux config
+- `Prefix + ?` - List all keybindings
+- `Prefix + T` - Show clock
+
+**Mouse Support:**
+- Click pane to focus
+- Drag pane border to resize
+- Click window name to switch
+- Scroll wheel to scroll history
+
+**Pro Tips:**
+- Mouse support is enabled by default in our config
+- Panes remember their working directory when splitting
+- Status bar shows session name, windows, and time
+- Active pane has a purple border
+- 50,000 line scrollback buffer
+
+### Fallback Behavior
+
+If tmux is not installed on the remote host, Good Morning Claude automatically falls back to direct SSH (no persistence). The session will work, but won't survive disconnects.
+
+## ⚙️ Terminal Configuration
+
+Good Morning Claude uses a pluggable terminal provider system. You can configure which terminal to use globally or per-session.
+
+### Global Configuration
+
+Edit `~/.claude-sessions/terminal-config.json`:
+```json
+{
+  "preferredTerminal": "auto",
+  "fallbackChain": ["wave", "windowsterminal", "cmd"],
+  "waveEnabled": true,
+  "wtEnabled": true,
+  "tmuxAutomatic": true
+}
+```
+
+**Options:**
+- `preferredTerminal`: "auto", "wave", "wt" (or "windowsterminal"), "cmd"
+- `fallbackChain`: Order of terminals to try when auto-detecting
+- `waveEnabled` / `wtEnabled`: Enable/disable specific terminals
+- `tmuxAutomatic`: Automatically use tmux for remote sessions (recommended: true)
+
+### Per-Session Terminal Preference
+
+Override the global default for specific sessions:
+```powershell
+claude-sessions -SetTerminal 'brainmon-dashboard wave'
+```
+
+This stores the preference in the registry. Next time you resume that session, it will use Wave Terminal regardless of the global setting.
+
+### Command-Line Override
+
+Always override with `-Terminal`:
+```powershell
+claude-goodmorning -Terminal wt     # Force Windows Terminal
+claude-launch -Terminal cmd         # Force cmd.exe
+claude-menu                          # Uses configured default
+```
 
 ## 🎨 Windows Terminal Setup
 

@@ -70,6 +70,7 @@ param(
     [string]$Panes = "",
     [Alias("w")]
     [switch]$Windows,
+    [string]$Terminal = "auto",
     [int]$Delay = 3,
     [switch]$DryRun,
     [Alias("h")]
@@ -99,14 +100,12 @@ if (-not $SshHost) {
 $SessionDir    = Join-Path $env:USERPROFILE ".claude-sessions"
 $ProfilesFile  = Join-Path $SessionDir "launch-profiles.json"
 
-# Tab colors -- distinct hues for easy visual identification
-$TabColors = @("#2D7D9A", "#8B5CF6", "#D97706", "#059669", "#DC2626", "#7C3AED", "#0891B2", "#CA8A04", "#4F46E5", "#BE185D")
-
-# WT color schemes -- match the custom schemes in Windows Terminal settings
-$ColorSchemes = @("Claude Teal", "Claude Purple", "Claude Amber", "Claude Emerald", "Claude Red", "Claude Violet", "Claude Cyan", "Claude Gold")
-
-# WT profile with suppressApplicationTitle so our --title sticks
-$WtProfile = "Claude Session"
+# Load terminal providers
+$providerDir = Join-Path $PSScriptRoot "terminal-providers"
+. (Join-Path $providerDir "TerminalProvider.ps1")
+. (Join-Path $providerDir "WindowsTerminalProvider.ps1")
+. (Join-Path $providerDir "WaveTerminalProvider.ps1")
+. (Join-Path $providerDir "CmdFallbackProvider.ps1")
 
 # Parse -Panes format: "RxC" (e.g. "2x4") or plain number (e.g. "4" = 1xN)
 $PaneRows = 0
@@ -238,20 +237,224 @@ function Save-Profiles {
     $Profiles | ConvertTo-Json -Depth 10 | Set-Content $ProfilesFile -Encoding UTF8
 }
 
+function Get-SlashCommandInstallScript {
+    <#
+    .SYNOPSIS
+        Returns a bash script that auto-installs /goodnight and /goodmorning slash commands on remote hosts
+    #>
+
+    # Embed the slash command content (escaped for heredoc)
+    $goodnightContent = Get-Content "$PSScriptRoot\..\claude-commands\goodnight.md" -Raw
+    $goodmorningContent = Get-Content "$PSScriptRoot\..\claude-commands\goodmorning.md" -Raw
+
+    # Create bash script with heredocs (single quotes prevent expansion)
+    # NOTE: Use -f (file exists) check instead of ! -f to avoid cmd.exe ! escaping issues
+    return @"
+# Auto-install Claude slash commands if not present
+if [ -f ~/.claude/commands/goodnight.md ]; then
+    true
+else
+    echo "  Installing Claude slash commands..."
+    mkdir -p ~/.claude/commands
+
+    cat > ~/.claude/commands/goodnight.md << 'EOFGOODNIGHT'
+$goodnightContent
+EOFGOODNIGHT
+
+    cat > ~/.claude/commands/goodmorning.md << 'EOFGOODMORNING'
+$goodmorningContent
+EOFGOODMORNING
+
+    echo "  Slash commands installed^!"
+fi
+"@
+}
+
+function New-AutoSavedSession {
+    param(
+        [string]$SessionSlug,
+        [string]$SessionName,
+        [string]$ProjectPath,
+        [string]$SshHost = "",
+        [string]$TmuxSessionName = ""
+    )
+
+    <#
+    .SYNOPSIS
+        Auto-saves a newly launched session to the registry and creates a session file
+    .DESCRIPTION
+        This allows sessions launched via claude-launch to be tracked immediately,
+        even if the user forgets to run /goodnight. They can still reconnect via tmux.
+    #>
+
+    $timestamp = Get-Date -Format "yyyy-MM-dd"
+    $sessionFile = Join-Path $SessionDir "${timestamp}_${SessionSlug}.md"
+    $projectName = if ($ProjectPath) { Split-Path $ProjectPath -Leaf } else { "Unknown" }
+
+    # Create session file with placeholder content
+    $sessionContent = @"
+# Session: $SessionName -- $timestamp
+
+## Status
+in-progress
+
+## Session Name
+$SessionName
+
+## Project Path
+$ProjectPath
+"@
+
+    if ($SshHost) {
+        $sessionContent += @"
+
+
+## Host
+$SshHost
+"@
+    }
+
+    if ($TmuxSessionName) {
+        $sessionContent += @"
+
+
+## Tmux Session
+$TmuxSessionName
+"@
+    }
+
+    $sessionContent += @"
+
+
+## Active Tasks
+- Freshly launched session - no saved context yet
+
+## Plan / Next Steps
+1. Run ``/goodnight`` to save your work context before closing
+
+## Key Context
+- Session was auto-created by claude-launch
+- No context saved yet - this is a fresh start
+
+## Files & Paths
+- (None recorded yet)
+
+## Notes
+Auto-saved session created at launch time. Run ``/goodnight`` to update with actual work context.
+"@
+
+    # Write session file
+    New-Item -ItemType Directory -Force -Path $SessionDir | Out-Null
+    [System.IO.File]::WriteAllText($sessionFile, $sessionContent, [System.Text.Encoding]::UTF8)
+
+    # Update registry
+    $RegistryFile = Join-Path $SessionDir "session-registry.json"
+    $registry = @()
+    if (Test-Path $RegistryFile) {
+        $raw = Get-Content $RegistryFile -Raw -ErrorAction SilentlyContinue
+        if (-not [string]::IsNullOrWhiteSpace($raw)) {
+            try {
+                $parsed = ConvertFrom-Json $raw
+                # Ensure we have a flat array of valid entries
+                if ($parsed -is [Array]) {
+                    $registry = @($parsed | Where-Object { $_ -and $_.sessionSlug })
+                } elseif ($parsed.sessionSlug) {
+                    $registry = @($parsed)
+                }
+            } catch {
+                Write-Warning "Registry file corrupted, starting fresh"
+                $registry = @()
+            }
+        }
+    }
+
+    # Create new entry
+    $newEntry = @{
+        sessionName      = $SessionName
+        sessionSlug      = $SessionSlug
+        projectName      = $projectName
+        projectPath      = $ProjectPath
+        host             = $SshHost
+        resumePath       = $sessionFile
+        status           = "in-progress"
+        lastUpdated      = (Get-Date -Format "yyyy-MM-ddTHH:mm:ss")
+        tmuxSessionName  = $TmuxSessionName
+        tmuxAttached     = $false
+        preferredTerminal = "auto"
+    }
+
+    # Check if entry already exists (by sessionSlug)
+    $existingIndex = -1
+    for ($i = 0; $i -lt $registry.Count; $i++) {
+        if ($registry[$i].sessionSlug -eq $SessionSlug) {
+            $existingIndex = $i
+            break
+        }
+    }
+
+    if ($existingIndex -ge 0) {
+        # Update existing entry
+        $registry[$existingIndex] = $newEntry
+    } else {
+        # Add new entry
+        $registry += $newEntry
+    }
+
+    # Write registry
+    $json = $registry | ConvertTo-Json -Depth 5
+    if ($registry.Count -eq 0) { $json = "[]" }
+    if ($registry.Count -eq 1) { $json = "[$json]" }
+    [System.IO.File]::WriteAllText($RegistryFile, $json, [System.Text.Encoding]::UTF8)
+
+    Write-Host "  Auto-saved: $SessionName" -ForegroundColor DarkGray
+}
+
 function Build-LaunchCmd {
     param(
         [string]$Title,
         [string]$ProjectPath,
         [string]$RemoteHost = "",
         [bool]$NoClaude = $false,
-        [bool]$NoSkipPermissions = $false
+        [bool]$NoSkipPermissions = $false,
+        [string]$TmuxSessionName = ""
     )
 
     $skipFlag = if ($NoSkipPermissions) { "" } else { "--dangerously-skip-permissions" }
     $launcherFile = Join-Path $env:TEMP "claude-launch-$(New-Guid).cmd"
 
     if ($RemoteHost -ne "") {
-        if ($NoClaude) {
+        # Check if we should use tmux for remote sessions
+        if ($TmuxSessionName -ne "" -and -not $NoClaude) {
+            # Check if tmux session exists
+            $tmuxExists = Test-TmuxSession -SshHost $RemoteHost -TmuxName $TmuxSessionName
+
+            if ($tmuxExists) {
+                # Attach to existing session
+                $launcherContent = @"
+@echo off
+title $Title
+echo.
+echo   Claude Launch -- $Title [remote: $RemoteHost]
+echo   Attaching to tmux session: $TmuxSessionName...
+echo.
+ssh $RemoteHost -t "tmux attach-session -t '$TmuxSessionName'"
+"@
+            }
+            else {
+                # Create new tmux session with Claude
+                $launcherContent = @"
+@echo off
+title $Title
+echo.
+echo   Claude Launch -- $Title [remote: $RemoteHost]
+echo   Creating tmux session: $TmuxSessionName...
+echo.
+ssh $RemoteHost -t "tmux new-session -d -s '$TmuxSessionName' && tmux send-keys -t '$TmuxSessionName' 'cd \"$ProjectPath\"' Enter && tmux send-keys -t '$TmuxSessionName' 'claude $skipFlag' Enter && tmux attach-session -t '$TmuxSessionName'"
+"@
+            }
+        }
+        elseif ($NoClaude) {
+            # NoClaude mode - plain terminal
             $launcherContent = @"
 @echo off
 title $Title
@@ -263,6 +466,7 @@ ssh $RemoteHost -t "cd '$ProjectPath' && exec `$SHELL -l"
 "@
         }
         else {
+            # Direct SSH without tmux
             $launcherContent = @"
 @echo off
 title $Title
@@ -275,7 +479,45 @@ ssh $RemoteHost -t "cd '$ProjectPath' && claude $skipFlag"
         }
     }
     else {
-        if ($NoClaude) {
+        # Local session - check if Team mode enabled and tmux available
+        $teamMode = Get-TeamModeConfig
+        $useTmux = ($teamMode -in @("prefer-attach", "auto")) -and (Test-LocalTmuxAvailable) -and -not $NoClaude
+
+        if ($useTmux -and $TmuxSessionName -ne "") {
+            # Local Team mode with tmux
+            $tmuxExists = Test-LocalTmuxSession -TmuxName $TmuxSessionName
+
+            if ($tmuxExists) {
+                # Attach to existing local tmux session
+                $launcherContent = @"
+@echo off
+title $Title
+echo.
+echo   Claude Launch -- $Title [Team mode]
+echo   Attaching to tmux session: $TmuxSessionName...
+echo.
+tmux attach-session -t "$TmuxSessionName"
+"@
+            }
+            else {
+                # Create new local tmux session with Claude
+                # Use send-keys approach for better compatibility with psmux
+                $launcherContent = @"
+@echo off
+title $Title
+echo.
+echo   Claude Launch -- $Title [Team mode]
+echo   Creating tmux session: $TmuxSessionName...
+echo.
+tmux new-session -d -s "$TmuxSessionName"
+tmux send-keys -t "$TmuxSessionName" "cd /d `"$ProjectPath`"" Enter
+tmux send-keys -t "$TmuxSessionName" "claude $skipFlag" Enter
+tmux attach-session -t "$TmuxSessionName"
+"@
+            }
+        }
+        elseif ($NoClaude) {
+            # NoClaude mode
             $launcherContent = @"
 @echo off
 title $Title
@@ -287,6 +529,7 @@ cmd /k
 "@
         }
         else {
+            # Regular local session (no tmux)
             $launcherContent = @"
 @echo off
 title $Title
@@ -312,11 +555,10 @@ function Clean-OldLaunchers {
 function Spawn-LaunchSessions {
     param([array]$Items)
 
-    $hasWt = Get-Command wt.exe -ErrorAction SilentlyContinue
+    # Build launcher files and session items
+    $launchItems = @()
     $launched = 0
 
-    # Build launcher files for all items
-    $launchItems = @()
     foreach ($item in $Items) {
         $title = $item.Label
         if ([string]::IsNullOrWhiteSpace($title)) {
@@ -331,15 +573,39 @@ function Spawn-LaunchSessions {
             $title = "$title #$($item.InstanceNum)"
         }
 
-        $color = $TabColors[$launchItems.Count % $TabColors.Count]
-
         # Validate local paths
         if (-not $item.Host -and -not (Test-Path $item.Path)) {
             Write-Warning "  Skipping '$title' -- path not found: $($item.Path)"
             continue
         }
 
-        $launcher = Build-LaunchCmd -Title $title -ProjectPath $item.Path -RemoteHost $item.Host -NoClaude $NoClaude -NoSkipPermissions $NoSkipPermissions
+        # Generate tmux session name (for both remote and local Team mode)
+        $tmuxName = ""
+        $teamMode = Get-TeamModeConfig
+        $needsTmux = ($item.Host -ne "") -or (($teamMode -in @("prefer-attach", "auto")) -and (Test-LocalTmuxAvailable))
+
+        if ($needsTmux -and -not $NoClaude) {
+            # Use a counter-based naming for launch (since these are fresh sessions)
+            $pathSlug = ($item.Path -replace '[^a-zA-Z0-9\-]', '-').Trim('-').ToLower()
+            $tmuxName = "claude-launch-$pathSlug-$($item.InstanceNum)"
+        }
+
+        # Auto-save session to registry (unless in NoClaude mode)
+        if (-not $NoClaude) {
+            $sessionSlug = if ($tmuxName) { $tmuxName } else {
+                $pathSlug = ($item.Path -replace '[^a-zA-Z0-9\-]', '-').Trim('-').ToLower()
+                "launch-$pathSlug-$($item.InstanceNum)"
+            }
+            $sessionName = "$title (launched)"
+
+            New-AutoSavedSession -SessionSlug $sessionSlug `
+                                  -SessionName $sessionName `
+                                  -ProjectPath $item.Path `
+                                  -SshHost $item.Host `
+                                  -TmuxSessionName $tmuxName
+        }
+
+        $launcher = Build-LaunchCmd -Title $title -ProjectPath $item.Path -RemoteHost $item.Host -NoClaude $NoClaude -NoSkipPermissions $NoSkipPermissions -TmuxSessionName $tmuxName
 
         if ($DryRun) {
             $modeTag = if ($NoClaude) { "[terminal]" } else { "[claude]" }
@@ -357,7 +623,6 @@ function Spawn-LaunchSessions {
         $launchItems += @{
             Title       = $title
             Launcher    = $launcher
-            Color       = $color
             ProjectPath = $item.Path
             SshHost     = $item.Host
         }
@@ -366,111 +631,41 @@ function Spawn-LaunchSessions {
     if ($DryRun) { return $launched }
     if ($launchItems.Count -eq 0) { return 0 }
 
-    if (-not $hasWt) {
-        # Fallback: plain cmd windows
-        foreach ($item in $launchItems) {
-            $wd = if ($item.SshHost -eq "") { $item.ProjectPath } else { $env:USERPROFILE }
-            Start-Process cmd.exe -ArgumentList "/k `"$($item.Launcher)`"" -WorkingDirectory $wd
-            Write-Host "  Spawned: " -NoNewline -ForegroundColor Green
-            Write-Host "$($item.Title)" -ForegroundColor Cyan
-            $launched++
-            Start-Sleep -Seconds $Delay
-        }
-        return $launched
+    # Prepare layout mode configuration
+    $layoutMode = @{
+        PaneRows = $PaneRows
+        PaneCols = $PaneCols
+        PanesPerTab = $PanesPerTab
+        Windows = $Windows.IsPresent
     }
 
-    # ── Grid pane mode: RxC layout per tab ─────────────────────────────
-    if ($PaneCols -gt 0) {
-        $groups = @()
-        for ($i = 0; $i -lt $launchItems.Count; $i += $PanesPerTab) {
-            $end = [Math]::Min($i + $PanesPerTab, $launchItems.Count)
-            $groups += ,@($launchItems[$i..($end - 1)])
-        }
-
-        foreach ($group in $groups) {
-            $windowArg = if ($Windows) { "-w new" } else { "-w 0" }
-            $actualCols = [Math]::Min($PaneCols, $group.Count)
-
-            # Helper to build pane args
-            function Get-PaneArgs($item, $idx) {
-                $scheme = $ColorSchemes[$idx % $ColorSchemes.Count]
-                $dir = if ($item.SshHost -eq "") { "-d `"$($item.ProjectPath)`"" } else { "" }
-                return "--title `"$($item.Title)`" --suppressApplicationTitle --colorScheme `"$scheme`" $dir cmd /k `"$($item.Launcher)`""
-            }
-
-            # Row 0, Column 0: new-tab
-            $first = $group[0]
-            $wtCmd = "$windowArg new-tab --tabColor `"$($first.Color)`" $(Get-PaneArgs $first 0)"
-
-            # Row 0, Columns 1..cols-1: split-pane -V (vertical columns)
-            for ($c = 1; $c -lt $actualCols -and $c -lt $group.Count; $c++) {
-                $wtCmd += " ; split-pane -V $(Get-PaneArgs $group[$c] $c)"
-            }
-
-            # Additional rows: alternate right-to-left / left-to-right
-            for ($r = 1; $r -lt $PaneRows; $r++) {
-                $rightToLeft = ($r % 2 -eq 1)
-
-                if ($rightToLeft) {
-                    # Start from rightmost column (focus is already there after row 0 / previous even row)
-                    $idx = $r * $actualCols + ($actualCols - 1)
-                    if ($idx -lt $group.Count) {
-                        $wtCmd += " ; split-pane -H $(Get-PaneArgs $group[$idx] $idx)"
-                    }
-                    # Move left through remaining columns
-                    for ($c = $actualCols - 2; $c -ge 0; $c--) {
-                        $idx = $r * $actualCols + $c
-                        if ($idx -lt $group.Count) {
-                            $wtCmd += " ; move-focus left ; split-pane -H $(Get-PaneArgs $group[$idx] $idx)"
-                        }
-                    }
-                }
-                else {
-                    # Start from leftmost column (focus is there after previous odd row)
-                    $idx = $r * $actualCols
-                    if ($idx -lt $group.Count) {
-                        $wtCmd += " ; split-pane -H $(Get-PaneArgs $group[$idx] $idx)"
-                    }
-                    # Move right through remaining columns
-                    for ($c = 1; $c -lt $actualCols; $c++) {
-                        $idx = $r * $actualCols + $c
-                        if ($idx -lt $group.Count) {
-                            $wtCmd += " ; move-focus right ; split-pane -H $(Get-PaneArgs $group[$idx] $idx)"
-                        }
-                    }
-                }
-            }
-
-            Start-Process wt.exe -ArgumentList $wtCmd
-            foreach ($item in $group) {
-                Write-Host "  Spawned: " -NoNewline -ForegroundColor Green
-                Write-Host "$($item.Title)" -ForegroundColor Cyan
-                $launched++
-            }
-            Start-Sleep -Seconds $Delay
-        }
+    # Prepare options
+    $options = @{
+        DryRun = $false
+        Delay = $Delay
     }
-    # ── Tab mode: one tab per session ────────────────────────────────────
-    else {
-        $tabIdx = 0
-        foreach ($item in $launchItems) {
-            $windowArg = if ($Windows) { "-w new" } else { "-w 0" }
-            $colorArg  = "--tabColor `"$($item.Color)`""
-            $scheme    = $ColorSchemes[$tabIdx % $ColorSchemes.Count]
-            $startDir  = if ($item.SshHost -eq "") { "-d `"$($item.ProjectPath)`"" } else { "" }
 
-            $wtArgs = "$windowArg new-tab --title `"$($item.Title)`" --suppressApplicationTitle $colorArg --colorScheme `"$scheme`" $startDir cmd /k `"$($item.Launcher)`""
-            Start-Process wt.exe -ArgumentList $wtArgs
+    # Determine which terminal provider to use
+    $preferredTerminal = Get-PreferredTerminal -Requested $Terminal
 
-            Write-Host "  Spawned: " -NoNewline -ForegroundColor Green
-            Write-Host "$($item.Title)" -ForegroundColor Cyan
-            $launched++
-            $tabIdx++
-            Start-Sleep -Seconds $Delay
+    # Dispatch to appropriate provider
+    $spawned = switch ($preferredTerminal) {
+        "wave" {
+            Spawn-WaveTerminalSessions -Items $launchItems -LayoutMode $layoutMode -Options $options
+        }
+        "windowsterminal" {
+            Spawn-WindowsTerminalSessions -Items $launchItems -LayoutMode $layoutMode -Options $options
+        }
+        "cmd" {
+            Spawn-CmdSessions -Items $launchItems -Options $options
+        }
+        default {
+            Write-Warning "Unknown terminal: $preferredTerminal"
+            0
         }
     }
 
-    return $launched
+    return $spawned
 }
 
 # ── Main ────────────────────────────────────────────────────────────────────

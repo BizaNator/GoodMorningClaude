@@ -31,6 +31,7 @@ param(
     [Alias("w")]
     [switch]$Windows,
     [string]$Panes = "",
+    [string]$Terminal = "auto",
 
     [int]$Delay = 3
 )
@@ -39,14 +40,12 @@ param(
 $SessionDir   = Join-Path $env:USERPROFILE ".claude-sessions"
 $RegistryFile = Join-Path $SessionDir "session-registry.json"
 
-# Tab colors -- distinct hues for easy visual identification
-$TabColors = @("#2D7D9A", "#8B5CF6", "#D97706", "#059669", "#DC2626", "#7C3AED", "#0891B2", "#CA8A04", "#4F46E5", "#BE185D")
-
-# WT color schemes -- match the custom schemes in Windows Terminal settings
-$ColorSchemes = @("Claude Teal", "Claude Purple", "Claude Amber", "Claude Emerald", "Claude Red", "Claude Violet", "Claude Cyan", "Claude Gold")
-
-# WT profile with suppressApplicationTitle so our --title sticks
-$WtProfile = "Claude Session"
+# Load terminal providers
+$providerDir = Join-Path $PSScriptRoot "terminal-providers"
+. (Join-Path $providerDir "TerminalProvider.ps1")
+. (Join-Path $providerDir "WindowsTerminalProvider.ps1")
+. (Join-Path $providerDir "WaveTerminalProvider.ps1")
+. (Join-Path $providerDir "CmdFallbackProvider.ps1")
 
 # Parse -Panes format: "RxC" (e.g. "2x4") or plain number (e.g. "4" = 1xN)
 $PaneRows = 0
@@ -112,6 +111,24 @@ function Show-Sessions {
             default       { "Gray" }
         }
 
+        # Extract created date from filename
+        $createdDate = "Unknown"
+        if ($s.resumePath -and $s.resumePath -match '(\d{4}-\d{2}-\d{2})_') {
+            $createdDate = $Matches[1]
+        }
+
+        # Calculate days since last update
+        $daysAgo = ""
+        if ($s.lastUpdated) {
+            try {
+                $lastUpdate = [DateTime]::Parse($s.lastUpdated)
+                $daysSince = ([DateTime]::Now - $lastUpdate).Days
+                if ($daysSince -eq 0) { $daysAgo = " (today)" }
+                elseif ($daysSince -eq 1) { $daysAgo = " (yesterday)" }
+                else { $daysAgo = " ($daysSince days ago)" }
+            } catch { }
+        }
+
         Write-Host "  [$i]" -NoNewline -ForegroundColor White
         Write-Host " $tabClr " -NoNewline -ForegroundColor DarkGray
         Write-Host "$($s.sessionName)" -NoNewline -ForegroundColor Cyan
@@ -120,6 +137,8 @@ function Show-Sessions {
             Write-Host "      Host: $($s.host)" -ForegroundColor DarkYellow
         }
         Write-Host "      Dir:  $($s.projectPath)" -ForegroundColor DarkGray
+        Write-Host "      Created: $createdDate" -NoNewline -ForegroundColor DarkGray
+        Write-Host " | Last used: $($s.lastUpdated)$daysAgo" -ForegroundColor DarkGray
         Write-Host "      File: $($s.resumePath)" -ForegroundColor DarkGray
 
         # Show first next-step from session file
@@ -139,7 +158,8 @@ function Build-Launcher {
         [string]$Title,
         [string]$ProjectPath,
         [string]$ResumePath,
-        [string]$SshHost = ""
+        [string]$SshHost = "",
+        [string]$TmuxSessionName = ""
     )
 
     $skipFlag = if ($NoSkipPermissions) { "" } else { "--dangerously-skip-permissions" }
@@ -147,7 +167,39 @@ function Build-Launcher {
     $launcherFile = Join-Path $env:TEMP "claude-gm-$(New-Guid).cmd"
 
     if ($SshHost -ne "") {
-        $launcherContent = @"
+        # Check if we should use tmux
+        if ($TmuxSessionName -ne "") {
+            # Check if tmux session exists
+            $tmuxExists = Test-TmuxSession -SshHost $SshHost -TmuxName $TmuxSessionName
+
+            if ($tmuxExists) {
+                # Attach to existing session
+                $launcherContent = @"
+@echo off
+title $Title
+echo.
+echo   Good Morning -- $Title [remote: $SshHost]
+echo   Attaching to tmux session: $TmuxSessionName...
+echo.
+ssh $SshHost -t "tmux attach-session -t '$TmuxSessionName'"
+"@
+            }
+            else {
+                # Create new tmux session with Claude
+                $launcherContent = @"
+@echo off
+title $Title
+echo.
+echo   Good Morning -- $Title [remote: $SshHost]
+echo   Creating tmux session: $TmuxSessionName...
+echo.
+ssh $SshHost -t "tmux new-session -s '$TmuxSessionName' -c '$ProjectPath' 'claude $skipFlag \"$initialPrompt\"'"
+"@
+            }
+        }
+        else {
+            # No tmux - direct SSH
+            $launcherContent = @"
 @echo off
 title $Title
 echo.
@@ -156,9 +208,49 @@ echo   Connecting to $SshHost...
 echo.
 ssh $SshHost -t "cd '$ProjectPath' && claude $skipFlag '$initialPrompt'"
 "@
+        }
     }
     else {
-        $launcherContent = @"
+        # Local session - check if Team mode enabled and tmux available
+        $teamMode = Get-TeamModeConfig
+        $useTmux = ($teamMode -in @("prefer-attach", "auto")) -and (Test-LocalTmuxAvailable)
+
+        if ($useTmux -and $TmuxSessionName -ne "") {
+            # Local Team mode with tmux
+            $tmuxExists = Test-LocalTmuxSession -TmuxName $TmuxSessionName
+
+            if ($tmuxExists) {
+                # Attach to existing local tmux session
+                $launcherContent = @"
+@echo off
+title $Title
+echo.
+echo   Good Morning -- $Title [Team mode]
+echo   Attaching to tmux session: $TmuxSessionName...
+echo.
+tmux attach-session -t "$TmuxSessionName"
+"@
+            }
+            else {
+                # Create new local tmux session with Claude
+                # Use send-keys approach for better compatibility with psmux
+                $launcherContent = @"
+@echo off
+title $Title
+echo.
+echo   Good Morning -- $Title [Team mode]
+echo   Creating tmux session: $TmuxSessionName...
+echo.
+tmux new-session -d -s "$TmuxSessionName"
+tmux send-keys -t "$TmuxSessionName" "cd /d `"$ProjectPath`"" Enter
+tmux send-keys -t "$TmuxSessionName" "claude $skipFlag `"$initialPrompt`"" Enter
+tmux attach-session -t "$TmuxSessionName"
+"@
+            }
+        }
+        else {
+            # Regular local session (no tmux)
+            $launcherContent = @"
 @echo off
 title $Title
 cd /d "$ProjectPath"
@@ -168,6 +260,7 @@ echo   Loading session context...
 echo.
 claude $skipFlag "$initialPrompt"
 "@
+        }
     }
     [System.IO.File]::WriteAllText($launcherFile, $launcherContent, [System.Text.Encoding]::ASCII)
     return $launcherFile
@@ -176,150 +269,74 @@ claude $skipFlag "$initialPrompt"
 function Spawn-Sessions {
     param([array]$Sessions)
 
-    $hasWt = Get-Command wt.exe -ErrorAction SilentlyContinue
-    $launched = 0
-
-    # Build launcher files for all sessions
+    # Build launcher files and session items
     $items = @()
     foreach ($s in $Sessions) {
         $title = $s.sessionName -replace '[^\w\s\-\.\:]', '' | ForEach-Object { $_.Trim() }
         if ([string]::IsNullOrWhiteSpace($title)) { $title = Split-Path $s.projectPath -Leaf }
         $remoteHost = if ($s.host) { $s.host } else { "" }
-        $color = $TabColors[$items.Count % $TabColors.Count]
 
         if (-not $s.host -and -not (Test-Path $s.projectPath)) {
             Write-Warning "  Skipping '$title' -- path not found: $($s.projectPath)"
             continue
         }
 
-        $launcher = Build-Launcher -Title $title -ProjectPath $s.projectPath -ResumePath $s.resumePath -SshHost $remoteHost
+        # Generate tmux session name (for both remote and local Team mode)
+        $tmuxName = ""
+        $teamMode = Get-TeamModeConfig
+        $needsTmux = ($remoteHost -ne "") -or (($teamMode -in @("prefer-attach", "auto")) -and (Test-LocalTmuxAvailable))
 
-        if ($DryRun) {
-            Write-Host "  [DRY RUN] " -NoNewline -ForegroundColor Magenta
-            Write-Host "$title" -NoNewline -ForegroundColor Cyan
-            Write-Host " $color" -ForegroundColor DarkGray
-            Remove-Item $launcher -ErrorAction SilentlyContinue
-            $launched++
-            continue
+        if ($needsTmux) {
+            $tmuxName = if ($s.tmuxSessionName) { $s.tmuxSessionName } else { "claude-$($s.sessionSlug)" }
         }
+
+        $launcher = Build-Launcher -Title $title -ProjectPath $s.projectPath -ResumePath $s.resumePath -SshHost $remoteHost -TmuxSessionName $tmuxName
 
         $items += @{
             Title       = $title
             Launcher    = $launcher
-            Color       = $color
             ProjectPath = $s.projectPath
             SshHost     = $remoteHost
         }
     }
 
-    if ($DryRun) { return $launched }
     if ($items.Count -eq 0) { return 0 }
 
-    if (-not $hasWt) {
-        # Fallback: plain cmd windows
-        foreach ($item in $items) {
-            $wd = if ($item.SshHost -eq "") { $item.ProjectPath } else { $env:USERPROFILE }
-            Start-Process cmd.exe -ArgumentList "/k `"$($item.Launcher)`"" -WorkingDirectory $wd
-            Write-Host "  Spawned: " -NoNewline -ForegroundColor Green
-            Write-Host "$($item.Title)" -ForegroundColor Cyan
-            $launched++
-            Start-Sleep -Seconds $Delay
-        }
-        return $launched
+    # Prepare layout mode configuration
+    $layoutMode = @{
+        PaneRows = $PaneRows
+        PaneCols = $PaneCols
+        PanesPerTab = $PanesPerTab
+        Windows = $Windows.IsPresent
     }
 
-    # ── Grid pane mode: RxC layout per tab ─────────────────────────────
-    if ($PaneCols -gt 0) {
-        $groups = @()
-        for ($i = 0; $i -lt $items.Count; $i += $PanesPerTab) {
-            $end = [Math]::Min($i + $PanesPerTab, $items.Count)
-            $groups += ,@($items[$i..($end - 1)])
-        }
-
-        foreach ($group in $groups) {
-            $windowArg = if ($Windows) { "-w new" } else { "-w 0" }
-            $actualCols = [Math]::Min($PaneCols, $group.Count)
-
-            # Helper to build pane args
-            function Get-PaneArgs($item, $idx) {
-                $scheme = $ColorSchemes[$idx % $ColorSchemes.Count]
-                $dir = if ($item.SshHost -eq "") { "-d `"$($item.ProjectPath)`"" } else { "" }
-                return "--title `"$($item.Title)`" --suppressApplicationTitle --colorScheme `"$scheme`" $dir cmd /k `"$($item.Launcher)`""
-            }
-
-            # Row 0, Column 0: new-tab
-            $first = $group[0]
-            $wtCmd = "$windowArg new-tab --tabColor `"$($first.Color)`" $(Get-PaneArgs $first 0)"
-
-            # Row 0, Columns 1..cols-1: split-pane -V (vertical columns)
-            for ($c = 1; $c -lt $actualCols -and $c -lt $group.Count; $c++) {
-                $wtCmd += " ; split-pane -V $(Get-PaneArgs $group[$c] $c)"
-            }
-
-            # Additional rows: alternate right-to-left / left-to-right
-            for ($r = 1; $r -lt $PaneRows; $r++) {
-                $rightToLeft = ($r % 2 -eq 1)
-
-                if ($rightToLeft) {
-                    # Start from rightmost column (focus is already there after row 0 / previous even row)
-                    $idx = $r * $actualCols + ($actualCols - 1)
-                    if ($idx -lt $group.Count) {
-                        $wtCmd += " ; split-pane -H $(Get-PaneArgs $group[$idx] $idx)"
-                    }
-                    # Move left through remaining columns
-                    for ($c = $actualCols - 2; $c -ge 0; $c--) {
-                        $idx = $r * $actualCols + $c
-                        if ($idx -lt $group.Count) {
-                            $wtCmd += " ; move-focus left ; split-pane -H $(Get-PaneArgs $group[$idx] $idx)"
-                        }
-                    }
-                }
-                else {
-                    # Start from leftmost column (focus is there after previous odd row)
-                    $idx = $r * $actualCols
-                    if ($idx -lt $group.Count) {
-                        $wtCmd += " ; split-pane -H $(Get-PaneArgs $group[$idx] $idx)"
-                    }
-                    # Move right through remaining columns
-                    for ($c = 1; $c -lt $actualCols; $c++) {
-                        $idx = $r * $actualCols + $c
-                        if ($idx -lt $group.Count) {
-                            $wtCmd += " ; move-focus right ; split-pane -H $(Get-PaneArgs $group[$idx] $idx)"
-                        }
-                    }
-                }
-            }
-
-            Start-Process wt.exe -ArgumentList $wtCmd
-            foreach ($item in $group) {
-                Write-Host "  Spawned: " -NoNewline -ForegroundColor Green
-                Write-Host "$($item.Title)" -ForegroundColor Cyan
-                $launched++
-            }
-            Start-Sleep -Seconds $Delay
-        }
+    # Prepare options
+    $options = @{
+        DryRun = $DryRun.IsPresent
+        Delay = $Delay
     }
-    # ── Tab mode: one tab per session ────────────────────────────────────
-    else {
-        $tabIdx = 0
-        foreach ($item in $items) {
-            $windowArg = if ($Windows) { "-w new" } else { "-w 0" }
-            $colorArg  = "--tabColor `"$($item.Color)`""
-            $scheme    = $ColorSchemes[$tabIdx % $ColorSchemes.Count]
-            $startDir  = if ($item.SshHost -eq "") { "-d `"$($item.ProjectPath)`"" } else { "" }
 
-            $wtArgs = "$windowArg new-tab --title `"$($item.Title)`" --suppressApplicationTitle $colorArg --colorScheme `"$scheme`" $startDir cmd /k `"$($item.Launcher)`""
-            Start-Process wt.exe -ArgumentList $wtArgs
+    # Determine which terminal provider to use
+    $preferredTerminal = Get-PreferredTerminal -Requested $Terminal
 
-            Write-Host "  Spawned: " -NoNewline -ForegroundColor Green
-            Write-Host "$($item.Title)" -ForegroundColor Cyan
-            $launched++
-            $tabIdx++
-            Start-Sleep -Seconds $Delay
+    # Dispatch to appropriate provider
+    $spawned = switch ($preferredTerminal) {
+        "wave" {
+            Spawn-WaveTerminalSessions -Items $items -LayoutMode $layoutMode -Options $options
+        }
+        "windowsterminal" {
+            Spawn-WindowsTerminalSessions -Items $items -LayoutMode $layoutMode -Options $options
+        }
+        "cmd" {
+            Spawn-CmdSessions -Items $items -Options $options
+        }
+        default {
+            Write-Warning "Unknown terminal: $preferredTerminal"
+            0
         }
     }
 
-    return $launched
+    return $spawned
 }
 
 # ── Main ────────────────────────────────────────────────────────────────────
@@ -399,7 +416,7 @@ if ($Session -ne "") {
 }
 
 # ── Load registry ───────────────────────────────────────────────────────────
-$sessions = Get-ActiveSessions
+$sessions = @(Get-ActiveSessions)
 
 if ($sessions.Count -eq 0) {
     Write-Host "  No active sessions found." -ForegroundColor Gray
@@ -418,19 +435,45 @@ if ($List) {
 # ── Pick mode (interactive) ─────────────────────────────────────────────────
 if ($Pick) {
     Show-Sessions -Sessions $sessions
-    Write-Host "  Enter numbers to spawn (comma-separated, or 'all'): " -NoNewline -ForegroundColor White
+    Write-Host ""
+    Write-Host "  Enter numbers to spawn (e.g., '1', '1,2,3', or 'all'): " -NoNewline -ForegroundColor White
     $input = Read-Host
 
-    if ($input -eq 'all') {
+    if ([string]::IsNullOrWhiteSpace($input)) {
+        Write-Host "  No selection made. Exiting." -ForegroundColor Yellow
+        exit 0
+    }
+
+    if ($input.Trim() -eq 'all') {
         $selected = $sessions
+        Write-Host "  Selected: All sessions ($($sessions.Count))" -ForegroundColor Green
     }
     else {
-        $indices = $input -split ',' | ForEach-Object { [int]$_.Trim() - 1 }
-        $selected = @($indices | Where-Object { $_ -ge 0 -and $_ -lt $sessions.Count } | ForEach-Object { $sessions[$_] })
+        try {
+            $sessionCount = @($sessions).Count
+            $indices = $input -split ',' | ForEach-Object {
+                $num = $_.Trim()
+                if ($num -match '^\d+$') {
+                    [int]$num - 1
+                }
+            } | Where-Object { $_ -is [int] }
+
+            $selected = @($indices | Where-Object { $_ -ge 0 -and $_ -lt $sessionCount } | ForEach-Object { $sessions[$_] })
+
+            if ($selected.Count -gt 0) {
+                Write-Host "  Selected: " -NoNewline -ForegroundColor Green
+                Write-Host ($selected | ForEach-Object { $_.sessionName }) -join ", " -ForegroundColor Cyan
+            }
+        }
+        catch {
+            Write-Host "  Invalid input: $_" -ForegroundColor Red
+            exit 1
+        }
     }
 
     if ($selected.Count -eq 0) {
-        Write-Host "  No valid selections." -ForegroundColor Yellow
+        $sessionCount = @($sessions).Count
+        Write-Host "  No valid selections. Check your numbers (1-$sessionCount)." -ForegroundColor Yellow
         exit 0
     }
 
