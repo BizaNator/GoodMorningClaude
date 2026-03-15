@@ -59,13 +59,127 @@ New-Item -ItemType Directory -Force -Path $ScriptDir | Out-Null
 Copy-WithBom (Join-Path $root "scripts\claude-goodmorning.ps1") (Join-Path $ScriptDir "claude-goodmorning.ps1")
 Copy-WithBom (Join-Path $root "scripts\claude-sessions.ps1")    (Join-Path $ScriptDir "claude-sessions.ps1")
 Copy-WithBom (Join-Path $root "scripts\claude-launch.ps1")      (Join-Path $ScriptDir "claude-launch.ps1")
+Copy-WithBom (Join-Path $root "scripts\claude-menu.ps1")        (Join-Path $ScriptDir "claude-menu.ps1")
 
 Write-Host "  [OK] Scripts -> $ScriptDir (UTF-8 with BOM)" -ForegroundColor Green
+
+# ── 2.5. Terminal providers (with UTF-8 BOM) ────────────────────────────────
+$providerDest = Join-Path $ScriptDir "terminal-providers"
+New-Item -ItemType Directory -Force -Path $providerDest | Out-Null
+
+Copy-WithBom (Join-Path $root "scripts\terminal-providers\TerminalProvider.ps1")          (Join-Path $providerDest "TerminalProvider.ps1")
+Copy-WithBom (Join-Path $root "scripts\terminal-providers\WindowsTerminalProvider.ps1")  (Join-Path $providerDest "WindowsTerminalProvider.ps1")
+Copy-WithBom (Join-Path $root "scripts\terminal-providers\WaveTerminalProvider.ps1")     (Join-Path $providerDest "WaveTerminalProvider.ps1")
+Copy-WithBom (Join-Path $root "scripts\terminal-providers\CmdFallbackProvider.ps1")      (Join-Path $providerDest "CmdFallbackProvider.ps1")
+
+Write-Host "  [OK] Terminal providers -> $providerDest" -ForegroundColor Green
 
 # ── 3. Create session storage ────────────────────────────────────────────────
 $sessDir = Join-Path $env:USERPROFILE ".claude-sessions"
 New-Item -ItemType Directory -Force -Path $sessDir | Out-Null
 Write-Host "  [OK] Session storage -> $sessDir" -ForegroundColor Green
+
+# ── 3.5. Create terminal-config.json (if doesn't exist) ─────────────────────
+$termConfigPath = Join-Path $sessDir "terminal-config.json"
+if (-not (Test-Path $termConfigPath)) {
+    $defaultTermConfig = @{
+        preferredTerminal = "auto"
+        fallbackChain = @("wave", "windowsterminal", "cmd")
+        waveEnabled = $true
+        wtEnabled = $true
+        tmuxAutomatic = $true
+    }
+    $termConfigJson = $defaultTermConfig | ConvertTo-Json -Depth 5
+    [System.IO.File]::WriteAllText($termConfigPath, $termConfigJson, [System.Text.Encoding]::UTF8)
+    Write-Host "  [OK] Terminal config created -> $termConfigPath" -ForegroundColor Green
+}
+else {
+    Write-Host "  [OK] Terminal config exists (not overwritten)" -ForegroundColor Green
+}
+
+# ── 3.7. psmux (terminal multiplexer) ─────────────────────────────────────────
+# psmux enables Team mode: Claude Code agent teams spawn in visible panes,
+# sessions persist across disconnects, and mouse scrolling works natively.
+$psmuxCmd = Get-Command psmux -ErrorAction SilentlyContinue
+if (-not $psmuxCmd) {
+    $psmuxCmd = Get-Command tmux -ErrorAction SilentlyContinue
+}
+
+$psmuxVersion = $null
+if ($psmuxCmd) {
+    $versionOutput = & $psmuxCmd.Source --version 2>$null
+    if ($versionOutput -match '(\d+\.\d+\.\d+)') {
+        $psmuxVersion = [version]$Matches[1]
+    }
+}
+
+$minVersion = [version]"3.1.0"
+
+if (-not $psmuxCmd) {
+    Write-Host ""
+    Write-Host "  psmux not found. psmux is a Windows terminal multiplexer (tmux for Windows)" -ForegroundColor Yellow
+    Write-Host "  that enables Team mode, session persistence, and mouse scrolling." -ForegroundColor Yellow
+    Write-Host "  Install psmux? (y/n): " -NoNewline
+    $ans = Read-Host
+    if ($ans -eq 'y') {
+        Write-Host "  Installing psmux from GitHub..." -ForegroundColor Cyan
+        try {
+            Invoke-Expression (Invoke-RestMethod "https://raw.githubusercontent.com/marlocarlo/psmux/master/scripts/install.ps1")
+            Write-Host "  [OK] psmux installed" -ForegroundColor Green
+        }
+        catch {
+            Write-Warning "  Failed to install psmux: $_"
+            Write-Host "  You can install manually: irm https://raw.githubusercontent.com/marlocarlo/psmux/master/scripts/install.ps1 | iex" -ForegroundColor DarkGray
+        }
+    }
+    else {
+        Write-Host "  Skipped. Team mode and session persistence will not be available." -ForegroundColor DarkGray
+    }
+}
+elseif ($psmuxVersion -and $psmuxVersion -lt $minVersion) {
+    Write-Host ""
+    Write-Host "  psmux $psmuxVersion found, but >= $minVersion is recommended" -ForegroundColor Yellow
+    Write-Host "  (v3.x adds Claude Code agent teams, mouse scrolling, cursor settings)." -ForegroundColor Yellow
+    Write-Host "  Update psmux? (y/n): " -NoNewline
+    $ans = Read-Host
+    if ($ans -eq 'y') {
+        Write-Host "  Stopping existing psmux processes..." -ForegroundColor Cyan
+        Get-Process psmux, pmux, tmux -ErrorAction SilentlyContinue | Stop-Process -Force
+        Start-Sleep -Seconds 2
+        Write-Host "  Updating psmux from GitHub..." -ForegroundColor Cyan
+        try {
+            Invoke-Expression (Invoke-RestMethod "https://raw.githubusercontent.com/marlocarlo/psmux/master/scripts/install.ps1")
+            Write-Host "  [OK] psmux updated" -ForegroundColor Green
+        }
+        catch {
+            Write-Warning "  Failed to update psmux: $_"
+        }
+    }
+    else {
+        Write-Host "  Skipped. Some v3.x features (agent teams, cursor settings) may not work." -ForegroundColor DarkGray
+    }
+}
+else {
+    Write-Host "  [OK] psmux $psmuxVersion detected (>= $minVersion)" -ForegroundColor Green
+}
+
+# Deploy psmux config if psmux is installed
+$psmuxConfSource = Join-Path $root "scripts\psmux.conf"
+if ((Get-Command psmux -ErrorAction SilentlyContinue) -or (Get-Command tmux -ErrorAction SilentlyContinue)) {
+    $psmuxConfDest = Join-Path $env:USERPROFILE ".psmux.conf"
+    if (Test-Path $psmuxConfSource) {
+        Copy-Item $psmuxConfSource $psmuxConfDest -Force
+        Write-Host "  [OK] psmux config -> $psmuxConfDest" -ForegroundColor Green
+    }
+
+    # Set PSMUX_DIM_PREDICTIONS=0 if not already set
+    $currentVal = [Environment]::GetEnvironmentVariable("PSMUX_DIM_PREDICTIONS", "User")
+    if ($currentVal -ne "0") {
+        [Environment]::SetEnvironmentVariable("PSMUX_DIM_PREDICTIONS", "0", "User")
+        $env:PSMUX_DIM_PREDICTIONS = "0"
+        Write-Host "  [OK] PSMUX_DIM_PREDICTIONS=0 (env var set)" -ForegroundColor Green
+    }
+}
 
 # ── 4. Execution policy check ────────────────────────────────────────────────
 $policy = Get-ExecutionPolicy -Scope CurrentUser
@@ -169,12 +283,23 @@ if ($wtFound.Count -gt 0) {
 Write-Host ""
 Write-Host "  Installation complete!" -ForegroundColor Green
 Write-Host ""
-Write-Host "  Usage:" -ForegroundColor White
-Write-Host "    Inside Claude Code:  /goodnight           Save session + register it" -ForegroundColor DarkGray
-Write-Host "    Inside Claude Code:  /goodmorning         Load session in current window" -ForegroundColor DarkGray
-Write-Host "    In PowerShell:       claude-goodmorning   Spawn ALL active sessions" -ForegroundColor DarkGray
+Write-Host "  Quick Start:" -ForegroundColor White
+Write-Host "    Inside Claude Code:  /goodnight              Save session + register it" -ForegroundColor DarkGray
+Write-Host "    Inside Claude Code:  /goodmorning            Load session in current window" -ForegroundColor DarkGray
+Write-Host "    In PowerShell:       claude-menu             Interactive menu (recommended!)" -ForegroundColor DarkGray
+Write-Host ""
+Write-Host "  Advanced Commands:" -ForegroundColor White
+Write-Host "    In PowerShell:       claude-goodmorning      Spawn ALL active sessions" -ForegroundColor DarkGray
 Write-Host "    In PowerShell:       claude-goodmorning -Panes `"2x4`"  Grid layout" -ForegroundColor DarkGray
-Write-Host "    In PowerShell:       claude-sessions      List registered sessions" -ForegroundColor DarkGray
-Write-Host "    In PowerShell:       claude-launch        Launch fresh sessions" -ForegroundColor DarkGray
-Write-Host "    Either script:       -Help                Show all options" -ForegroundColor DarkGray
+Write-Host "    In PowerShell:       claude-sessions         List registered sessions" -ForegroundColor DarkGray
+Write-Host "    In PowerShell:       claude-sessions -SyncWave  Sync to Wave Terminal" -ForegroundColor DarkGray
+Write-Host "    In PowerShell:       claude-launch           Launch fresh sessions" -ForegroundColor DarkGray
+Write-Host "    Any script:          -Help                   Show all options" -ForegroundColor DarkGray
+Write-Host ""
+Write-Host "  New Features:" -ForegroundColor White
+Write-Host "    - psmux v3.x: Claude Code agent teams in visible panes" -ForegroundColor DarkGray
+Write-Host "    - psmux v3.x: Full mouse support with scrolling" -ForegroundColor DarkGray
+Write-Host "    - Wave Terminal support with automatic SSH connections" -ForegroundColor DarkGray
+Write-Host "    - Session persistence across disconnects (psmux/tmux)" -ForegroundColor DarkGray
+Write-Host "    - Interactive menu system for easy session management" -ForegroundColor DarkGray
 Write-Host ""
