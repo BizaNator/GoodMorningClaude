@@ -113,12 +113,25 @@ if ($psmuxCmd) {
     }
 }
 
-$minVersion = [version]"3.1.0"
+# Check latest available version from GitHub
+$latestVersion = $null
+try {
+    $releaseInfo = Invoke-RestMethod "https://api.github.com/repos/marlocarlo/psmux/releases/latest" -TimeoutSec 10
+    if ($releaseInfo.tag_name -match '(\d+\.\d+\.\d+)') {
+        $latestVersion = [version]$Matches[1]
+    }
+}
+catch {
+    Write-Host "  (Could not check latest psmux version from GitHub)" -ForegroundColor DarkGray
+}
 
 if (-not $psmuxCmd) {
     Write-Host ""
     Write-Host "  psmux not found. psmux is a Windows terminal multiplexer (tmux for Windows)" -ForegroundColor Yellow
     Write-Host "  that enables Team mode, session persistence, and mouse scrolling." -ForegroundColor Yellow
+    if ($latestVersion) {
+        Write-Host "  Latest version: $latestVersion" -ForegroundColor Yellow
+    }
     Write-Host "  Install psmux? (y/n): " -NoNewline
     $ans = Read-Host
     if ($ans -eq 'y') {
@@ -136,31 +149,31 @@ if (-not $psmuxCmd) {
         Write-Host "  Skipped. Team mode and session persistence will not be available." -ForegroundColor DarkGray
     }
 }
-elseif ($psmuxVersion -and $psmuxVersion -lt $minVersion) {
+elseif ($psmuxVersion -and $latestVersion -and $psmuxVersion -lt $latestVersion) {
     Write-Host ""
-    Write-Host "  psmux $psmuxVersion found, but >= $minVersion is recommended" -ForegroundColor Yellow
-    Write-Host "  (v3.x adds Claude Code agent teams, mouse scrolling, cursor settings)." -ForegroundColor Yellow
+    Write-Host "  psmux $psmuxVersion installed, but $latestVersion is available." -ForegroundColor Yellow
     Write-Host "  Update psmux? (y/n): " -NoNewline
     $ans = Read-Host
     if ($ans -eq 'y') {
         Write-Host "  Stopping existing psmux processes..." -ForegroundColor Cyan
         Get-Process psmux, pmux, tmux -ErrorAction SilentlyContinue | Stop-Process -Force
         Start-Sleep -Seconds 2
-        Write-Host "  Updating psmux from GitHub..." -ForegroundColor Cyan
+        Write-Host "  Updating psmux to $latestVersion..." -ForegroundColor Cyan
         try {
             Invoke-Expression (Invoke-RestMethod "https://raw.githubusercontent.com/marlocarlo/psmux/master/scripts/install.ps1")
-            Write-Host "  [OK] psmux updated" -ForegroundColor Green
+            Write-Host "  [OK] psmux updated to $latestVersion" -ForegroundColor Green
         }
         catch {
             Write-Warning "  Failed to update psmux: $_"
         }
     }
     else {
-        Write-Host "  Skipped. Some v3.x features (agent teams, cursor settings) may not work." -ForegroundColor DarkGray
+        Write-Host "  Skipped. Current version: $psmuxVersion" -ForegroundColor DarkGray
     }
 }
 else {
-    Write-Host "  [OK] psmux $psmuxVersion detected (>= $minVersion)" -ForegroundColor Green
+    $upToDate = if ($latestVersion) { "(latest)" } else { "" }
+    Write-Host "  [OK] psmux $psmuxVersion $upToDate" -ForegroundColor Green
 }
 
 # Deploy psmux config if psmux is installed
