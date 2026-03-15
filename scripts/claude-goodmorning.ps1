@@ -234,14 +234,17 @@ tmux attach-session -t "$TmuxSessionName"
             else {
                 # Create new local tmux session with Claude
                 # Use send-keys approach for better compatibility with psmux
+                # psmux v3.x sets CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 automatically
                 $launcherContent = @"
 @echo off
 title $Title
 echo.
 echo   Good Morning -- $Title [Team mode]
-echo   Creating tmux session: $TmuxSessionName...
+echo   Creating psmux session: $TmuxSessionName...
 echo.
+set PSMUX_DIM_PREDICTIONS=0
 tmux new-session -d -s "$TmuxSessionName"
+tmux set-option -t "$TmuxSessionName" mouse on
 tmux send-keys -t "$TmuxSessionName" "cd /d `"$ProjectPath`"" Enter
 tmux send-keys -t "$TmuxSessionName" "claude $skipFlag `"$initialPrompt`"" Enter
 tmux attach-session -t "$TmuxSessionName"

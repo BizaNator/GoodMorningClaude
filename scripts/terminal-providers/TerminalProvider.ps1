@@ -240,29 +240,58 @@ function Test-LocalTmuxAvailable {
 
     .DESCRIPTION
     Detects psmux or other tmux-compatible implementations on Windows.
-    Checks both PATH and common install locations.
+    Checks PATH and known psmux install locations.
+    Requires psmux >= 3.1.0 for full mouse/scrolling and Claude Code agent teams.
     #>
 
-    # Check if tmux is in PATH
-    $tmuxCmd = Get-Command tmux -ErrorAction SilentlyContinue
-    if ($tmuxCmd) {
-        return $true
-    }
+    # Check if psmux or tmux is in PATH
+    $psmuxCmd = Get-Command psmux -ErrorAction SilentlyContinue
+    if ($psmuxCmd) { return $true }
 
-    # Check common psmux install locations
+    $tmuxCmd = Get-Command tmux -ErrorAction SilentlyContinue
+    if ($tmuxCmd) { return $true }
+
+    # Check known psmux install locations
     $commonPaths = @(
+        "$env:LOCALAPPDATA\psmux\psmux.exe",
+        "$env:LOCALAPPDATA\psmux\tmux.exe",
+        "C:\tools\psmux\psmux.exe",
         "$env:LOCALAPPDATA\Programs\psmux\tmux.exe",
-        "$env:ProgramFiles\psmux\tmux.exe",
-        "$env:ProgramFiles (x86)\psmux\tmux.exe"
+        "$env:ProgramFiles\psmux\tmux.exe"
     )
 
     foreach ($path in $commonPaths) {
-        if (Test-Path $path) {
+        if ($path -and (Test-Path $path)) {
             return $true
         }
     }
 
     return $false
+}
+
+function Get-LocalPsmuxVersion {
+    <#
+    .SYNOPSIS
+    Get the installed psmux version number
+
+    .RETURNS
+    Version string (e.g. "3.1.0") or $null if not installed
+    #>
+
+    $cmd = Get-Command psmux -ErrorAction SilentlyContinue
+    if (-not $cmd) {
+        $cmd = Get-Command tmux -ErrorAction SilentlyContinue
+    }
+    if (-not $cmd) { return $null }
+
+    try {
+        $output = & $cmd.Source --version 2>$null
+        if ($output -match '(\d+\.\d+\.\d+)') {
+            return $Matches[1]
+        }
+    } catch {}
+
+    return $null
 }
 
 function Test-LocalTmuxSession {
